@@ -1,54 +1,35 @@
 #!/bin/bash
-# -----------------------------------------
-# run_pretrain.sh
-# -----------------------------------------
-# Usage: bash run_pretrain.sh
-# This script launches self-supervised training on burst/HPC.
+# =========================================
+# Run self-supervised training on Burst HPC
+# =========================================
 
-# -----------------------------------------
-# Request GPU resources (adjust as needed)
-# -----------------------------------------
-# Example for 1 A100 GPU for 4 hours:
-# srun --account=csci_ga_2572-2025fa \
-#      --partition=c12m85-a100-1 \
-#      --gres=gpu:1 \
-#      --time=04:00:00 \
-#      --pty /bin/bash
+# Request: interactive shell or Slurm (if needed, adjust GPU/time in srun)
+# Example for Slurm:
+# srun --account=csci_ga_2572-2025fa --partition=c12m85-a100-1 --gres=gpu:1 --time=08:00:00 --pty /bin/bash
 
-# -----------------------------------------
-# Load Conda
-# -----------------------------------------
-# Adjust path if Miniconda is installed elsewhere
-source /home/vt2370/miniconda3/etc/profile.d/conda.sh
-
-# Activate your environment
+# -----------------------------
+# 1. Initialize Conda
+# -----------------------------
+CONDA_DIR="/home/vt2370/miniconda3"
+source $CONDA_DIR/etc/profile.d/conda.sh
 conda activate ssl_env
 
-# -----------------------------------------
-# Set paths
-# -----------------------------------------
+# -----------------------------
+# 2. Set paths
+# -----------------------------
+DATA_DIR="/scratch/vt2370/fall2025_deeplearning/cc3m_all/train"
 CONFIG_FILE="./configs/pretrain.yaml"
 OUTPUT_DIR="./artifacts"
 
-# Make sure output directories exist
-mkdir -p $OUTPUT_DIR/logs
-mkdir -p $OUTPUT_DIR/checkpoints
+mkdir -p $OUTPUT_DIR
 
-# -----------------------------------------
-# Run training
-# -----------------------------------------
+# -----------------------------
+# 3. Launch training
+# -----------------------------
+echo "Starting SSL training..."
 python code/train_ssl.py \
     --config $CONFIG_FILE \
-    --output_dir $OUTPUT_DIR \
-    --device cuda
+    --data_dir $DATA_DIR \
+    --output_dir $OUTPUT_DIR
 
-# Optional: redirect logs
-# python code/train_ssl.py \
-#    --config $CONFIG_FILE \
-#    --output_dir $OUTPUT_DIR \
-#    --device cuda \
-#    > $OUTPUT_DIR/logs/train.log 2>&1
-
-
-
-
+echo "Training finished!"

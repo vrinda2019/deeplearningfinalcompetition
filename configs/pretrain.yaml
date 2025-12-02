@@ -1,0 +1,24 @@
+# configs/pretrain.yaml
+
+# Dataset paths
+data_dir: "/scratch/vt2370/fall2025_deeplearning/cc3m_all/train"
+batch_size: 128
+num_workers: 4
+image_size: 96
+
+# Model parameters
+backbone: "vit_tiny_patch16_96"
+feature_dim: 128
+
+# Training parameters
+epochs: 50
+learning_rate: 0.001
+weight_decay: 1e-6
+temperature: 0.5
+
+# Output / Artifacts
+save_dir: "artifacts"
+save_backbone_name: "backbone.pth"
+
+# Seed
+seed: 42

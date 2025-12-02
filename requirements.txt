@@ -1,0 +1,23 @@
+# Core PyTorch
+torch==2.2.0
+torchvision==0.17.0
+torchaudio==2.2.0
+
+# TIMM for Vision Transformers
+timm==0.9.10
+
+# Data handling
+pandas==2.0.3
+numpy==1.26.5
+
+# YAML config parsing
+PyYAML==6.0
+
+# Image processing
+Pillow==10.0.1
+
+# Optional: progress bars
+tqdm==4.66.1
+
+# Optional: reproducibility
+torchmetrics==1.0.3

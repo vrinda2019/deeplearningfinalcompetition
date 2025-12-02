@@ -26,7 +26,7 @@ pip install --upgrade "numpy<2"
 # --------------------------
 # Config & output directories
 # --------------------------
-CONFIG_FILE="configs/ssl_config.yaml"
+CONFIG_FILE="configs/pretrain.yaml"
 OUTPUT_DIR="./artifacts"
 
 mkdir -p $OUTPUT_DIR

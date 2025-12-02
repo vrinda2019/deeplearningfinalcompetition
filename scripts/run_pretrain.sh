@@ -1,35 +1,44 @@
 #!/bin/bash
-# =========================================
-# Run self-supervised training on Burst HPC
-# =========================================
+#SBATCH --account=csci_ga_2572-2025fa   # Your account
+#SBATCH --partition=c12m85-a100-1       # GPU partition
+#SBATCH --gres=gpu:1                     # Number of GPUs
+#SBATCH --time=08:00:00                  # Max runtime
+#SBATCH --job-name=ssl_pretrain
+#SBATCH --output=logs/ssl_pretrain_%j.log
+#SBATCH --chdir=/scratch/vt2370/fall2025_deeplearning/deeplearning_repo
 
-# Request: interactive shell or Slurm (if needed, adjust GPU/time in srun)
-# Example for Slurm:
-# srun --account=csci_ga_2572-2025fa --partition=c12m85-a100-1 --gres=gpu:1 --time=08:00:00 --pty /bin/bash
-
-# -----------------------------
-# 1. Initialize Conda
-# -----------------------------
-CONDA_DIR="/home/vt2370/miniconda3"
-source $CONDA_DIR/etc/profile.d/conda.sh
+# --------------------------
+# Load conda environment
+# --------------------------
+echo "Activating conda environment..."
+source /home/vt2370/miniconda3/etc/profile.d/conda.sh
 conda activate ssl_env
 
-# -----------------------------
-# 2. Set paths
-# -----------------------------
-DATA_DIR="/scratch/vt2370/fall2025_deeplearning/cc3m_all/train"
-CONFIG_FILE="./configs/pretrain.yaml"
+# Check Python and CUDA
+echo "Python version: $(python --version)"
+echo "CUDA available: $(python -c 'import torch; print(torch.cuda.is_available())')"
+
+# --------------------------
+# NumPy fix (if needed)
+# --------------------------
+pip install --upgrade "numpy<2"
+
+# --------------------------
+# Config & output directories
+# --------------------------
+CONFIG_FILE="configs/ssl_config.yaml"
 OUTPUT_DIR="./artifacts"
 
 mkdir -p $OUTPUT_DIR
+mkdir -p logs
 
-# -----------------------------
-# 3. Launch training
-# -----------------------------
-echo "Starting SSL training..."
-python code/train_ssl.py \
-    --config $CONFIG_FILE \
-    --data_dir $DATA_DIR \
-    --output_dir $OUTPUT_DIR
+echo "Using config: $CONFIG_FILE"
+echo "Output directory: $OUTPUT_DIR"
+
+# --------------------------
+# Start SSL pretraining
+# --------------------------
+echo "Starting SSL pretraining..."
+python code/train_ssl.py --config $CONFIG_FILE
 
 echo "Training finished!"

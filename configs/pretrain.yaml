@@ -1,7 +1,7 @@
 # configs/pretrain.yaml
 
 # Dataset paths
-data_dir: "/scratch/vt2370/fall2025_deeplearning/cc3m_all/train"
+data_dir: "/scratch/vt2370/dataset/cc3m_all/train"
 batch_size: 128
 num_workers: 4
 image_size: 96

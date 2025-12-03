@@ -8,24 +8,56 @@ import timm
 import torch.nn.functional as F
 import os
 import random
+import os
+from PIL import Image
+from torch.utils.data import Dataset
+import torchvision.transforms as T
+import random
+
 
 # ----------------------
 # Data Augmentations
 # ----------------------
-class SimCLRTransform:
-    def __init__(self, image_size):
-        self.transform = transforms.Compose([
-            transforms.RandomResizedCrop(image_size),
-            transforms.RandomHorizontalFlip(),
-            transforms.ColorJitter(0.8, 0.8, 0.8, 0.2),
-            transforms.RandomGrayscale(p=0.2),
-            transforms.ToTensor(),
-            transforms.Normalize([0.485, 0.456, 0.406],
-                                 [0.229, 0.224, 0.225]),
+class SimCLRDataset(Dataset):
+    def __init__(self, root, image_size):
+        self.root = root
+
+        # Load ALL image paths (flat or nested)
+        exts = (".jpg", ".jpeg", ".png", ".bmp", ".webp")
+        self.files = [
+            os.path.join(root, f)
+            for f in os.listdir(root)
+            if f.lower().endswith(exts)
+        ]
+
+        if len(self.files) == 0:
+            raise RuntimeError(f"No image files found in {root}")
+
+        # SimCLR augmentations
+        self.transform = T.Compose([
+            T.RandomResizedCrop(image_size, scale=(0.2, 1.0)),
+            T.RandomHorizontalFlip(),
+            T.ColorJitter(0.4, 0.4, 0.4, 0.1),
+            T.RandomGrayscale(p=0.2),
+            T.ToTensor(),
+            T.Normalize(
+                mean=[0.485, 0.456, 0.406],
+                std=[0.229, 0.224, 0.225]
+            )
         ])
 
-    def __call__(self, x):
-        return self.transform(x), self.transform(x)
+    def __len__(self):
+        return len(self.files)
+
+    def __getitem__(self, idx):
+        path = self.files[idx]
+        img = Image.open(path).convert("RGB")
+
+        # SimCLR requires two augmented views
+        x1 = self.transform(img)
+        x2 = self.transform(img)
+
+        return x1, x2
 
 # ----------------------
 # Dataset Wrapper

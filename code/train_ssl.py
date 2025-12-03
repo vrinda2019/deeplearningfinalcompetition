@@ -135,10 +135,11 @@ def main():
 
     # Optimizer
     optimizer = torch.optim.Adam(
-        model.parameters(),
-        lr=config["learning_rate"],
-        weight_decay=config["weight_decay"]
-    )
+    model.parameters(),
+    lr=float(config["learning_rate"]),
+    weight_decay=float(config["weight_decay"])
+)
+
 
     # Training
     for epoch in range(config["epochs"]):

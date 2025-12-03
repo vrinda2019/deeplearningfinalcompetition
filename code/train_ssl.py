@@ -1,28 +1,21 @@
-import argparse
-import yaml
+import os
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader
-from torchvision import datasets, transforms
-import timm
 import torch.nn.functional as F
-import os
-import random
-import os
+from torch.utils.data import Dataset, DataLoader
 from PIL import Image
-from torch.utils.data import Dataset
 import torchvision.transforms as T
-import random
+import timm
 
+########################################
+# 1. SimCLR Dataset (no class folders)
+########################################
 
-# ----------------------
-# Data Augmentations
-# ----------------------
 class SimCLRDataset(Dataset):
-    def __init__(self, root, image_size):
+    def __init__(self, root, image_size=224):
         self.root = root
 
-        # Load ALL image paths (flat or nested)
+        # Find all image files
         exts = (".jpg", ".jpeg", ".png", ".bmp", ".webp")
         self.files = [
             os.path.join(root, f)
@@ -33,7 +26,6 @@ class SimCLRDataset(Dataset):
         if len(self.files) == 0:
             raise RuntimeError(f"No image files found in {root}")
 
-        # SimCLR augmentations
         self.transform = T.Compose([
             T.RandomResizedCrop(image_size, scale=(0.2, 1.0)),
             T.RandomHorizontalFlip(),
@@ -50,54 +42,38 @@ class SimCLRDataset(Dataset):
         return len(self.files)
 
     def __getitem__(self, idx):
-        path = self.files[idx]
-        img = Image.open(path).convert("RGB")
-
-        # SimCLR requires two augmented views
+        img = Image.open(self.files[idx]).convert("RGB")
         x1 = self.transform(img)
         x2 = self.transform(img)
-
         return x1, x2
 
-# ----------------------
-# Dataset Wrapper
-# ----------------------
-class SimCLRDataset(datasets.ImageFolder):
-    def __init__(self, root, image_size):
-        super().__init__(root=root)
-        self.simclr_transform = SimCLRTransform(image_size)
 
-    def __getitem__(self, index):
-        img, _ = super().__getitem__(index)
-        x_i, x_j = self.simclr_transform(img)
-        return x_i, x_j
+########################################
+# 2. SimCLR Model with ViT Encoder
+########################################
 
-# ----------------------
-# Projection Head
-# ----------------------
 class ProjectionHead(nn.Module):
     def __init__(self, in_dim, out_dim):
         super().__init__()
-        self.mlp = nn.Sequential(
+        self.net = nn.Sequential(
             nn.Linear(in_dim, in_dim),
             nn.ReLU(inplace=True),
             nn.Linear(in_dim, out_dim)
         )
 
     def forward(self, x):
-        return self.mlp(x)
+        return self.net(x)
 
-# ----------------------
-# ViT SSL Model
-# ----------------------
+
 class SimCLRViT(nn.Module):
     def __init__(self, feature_dim=128):
         super().__init__()
 
+        # vit_tiny_patch16_224 exists in timm
         self.encoder = timm.create_model(
             'vit_tiny_patch16_224',
             pretrained=False,
-            num_classes=0   # no classification head, return embeddings
+            num_classes=0
         )
 
         embed_dim = self.encoder.num_features
@@ -108,91 +84,66 @@ class SimCLRViT(nn.Module):
         z = F.normalize(self.projector(h), dim=1)
         return h, z
 
-# ----------------------
-# NT-Xent Loss
-# ----------------------
-def nt_xent_loss(z_i, z_j, temperature=0.5):
-    batch_size = z_i.shape[0]
-    z = torch.cat([z_i, z_j], dim=0)
-    z = F.normalize(z, dim=1)
 
-    similarity_matrix = torch.matmul(z, z.T)
-    mask = ~torch.eye(2*batch_size, dtype=bool, device=z.device)
+########################################
+# 3. NT-Xent Loss
+########################################
 
-    sim_exp = torch.exp(similarity_matrix / temperature) * mask
+def nt_xent_loss(z1, z2, temperature=0.5):
+    N = z1.size(0)
+    z = torch.cat([z1, z2], dim=0)
 
-    pos_sim = torch.exp(torch.sum(z_i * z_j, dim=1) / temperature)
-    pos_sim = torch.cat([pos_sim, pos_sim], dim=0)
+    sim = torch.mm(z, z.t()) / temperature
+    mask = ~torch.eye(2 * N, dtype=bool).to(z.device)
+    sim = sim[mask].view(2 * N, 2 * N - 1)
 
-    loss = -torch.log(pos_sim / sim_exp.sum(dim=1))
-    return loss.mean()
+    positives = torch.sum(z1 * z2, dim=-1) / temperature
+    positives = torch.cat([positives, positives], dim=0)
 
-# ----------------------
-# Training Loop
-# ----------------------
+    labels = torch.arange(2 * N).to(z.device)
+
+    return F.cross_entropy(sim, labels)
+
+
+########################################
+# 4. Training Loop
+########################################
+
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--config', type=str, required=True)
-    args = parser.parse_args()
+    data_dir = "/scratch/vt2370/dataset/cc3m_all/train"
+    image_size = 224
+    batch_size = 256
+    epochs = 100
+    lr = 3e-4
 
-    with open(args.config, 'r') as f:
-        config = yaml.safe_load(f)
+    print("Loading dataset...")
+    dataset = SimCLRDataset(data_dir, image_size)
+    loader = DataLoader(dataset, batch_size=batch_size,
+                        shuffle=True, num_workers=8,
+                        drop_last=True)
 
-    # Seeds
-    torch.manual_seed(config["seed"])
-    random.seed(config["seed"])
+    print("Building model...")
+    model = SimCLRViT().cuda()
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    os.makedirs(config["save_dir"], exist_ok=True)
+    print("Starting SSL pretraining...")
+    for epoch in range(epochs):
+        for x1, x2 in loader:
+            x1, x2 = x1.cuda(), x2.cuda()
+            _, z1 = model(x1)
+            _, z2 = model(x2)
 
-    # Dataset
-    dataset = SimCLRDataset(config["data_dir"], config["image_size"])
-    loader = DataLoader(
-        dataset,
-        batch_size=config["batch_size"],
-        shuffle=True,
-        num_workers=config["num_workers"],
-        drop_last=True
-    )
-
-    # Model
-    model = SimCLRViT(feature_dim=config["feature_dim"]).to(device)
-    print(f"Trainable Params: {sum(p.numel() for p in model.parameters() if p.requires_grad) / 1e6:.2f}M")
-
-    optimizer = torch.optim.Adam(
-        model.parameters(),
-        lr=config["learning_rate"],
-        weight_decay=config["weight_decay"]
-    )
-
-    # Train
-    for epoch in range(config["epochs"]):
-        model.train()
-        total_loss = 0
-
-        for x_i, x_j in loader:
-            x_i, x_j = x_i.to(device), x_j.to(device)
-            _, z_i = model(x_i)
-            _, z_j = model(x_j)
-
-            loss = nt_xent_loss(z_i, z_j, temperature=config["temperature"])
+            loss = nt_xent_loss(z1, z2)
 
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
 
-            total_loss += loss.item()
+        print(f"Epoch {epoch+1}/{epochs} - Loss: {loss.item():.4f}")
 
-        avg_loss = total_loss / len(loader)
-        print(f"Epoch {epoch+1}/{config['epochs']} - Loss: {avg_loss:.4f}")
+    print("Training finished!")
 
-    # Save encoder weights only
-    torch.save(
-        model.encoder.state_dict(),
-        os.path.join(config["save_dir"], config["save_backbone_name"])
-    )
-
-    print("Finished training. Backbone saved.")
 
 if __name__ == "__main__":
     main()
+

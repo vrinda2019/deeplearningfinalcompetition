@@ -2,12 +2,14 @@ import argparse
 import yaml
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader
-from torchvision import datasets, transforms
+from torch.utils.data import DataLoader, Dataset
+from torchvision import transforms
+from PIL import Image
 import timm
 import torch.nn.functional as F
 import os
 import random
+from glob import glob
 
 # ----------------------
 # Dual Augmentation Transform
@@ -25,20 +27,32 @@ class SimCLRTransform:
         ])
         
     def __call__(self, x):
-        return self.transform(x), self.transform(x)  # two augmented views
+        return self.transform(x), self.transform(x)
+
 
 # ----------------------
-# Dataset Wrapper
+# CC3M-style Dataset (flat directory of images)
 # ----------------------
-class SimCLRDataset(datasets.ImageFolder):
+class SimCLRDataset(Dataset):
     def __init__(self, root, image_size):
-        super().__init__(root=root)
+        self.files = sorted(glob(os.path.join(root, "*.jpg")) +
+                            glob(os.path.join(root, "*.png")) +
+                            glob(os.path.join(root, "*.jpeg")))
+        
+        if len(self.files) == 0:
+            raise RuntimeError(f"No images found in {root}")
+
         self.simclr_transform = SimCLRTransform(image_size)
-    
+
+    def __len__(self):
+        return len(self.files)
+
     def __getitem__(self, index):
-        img, _ = super().__getitem__(index)
+        path = self.files[index]
+        img = Image.open(path).convert("RGB")
         x_i, x_j = self.simclr_transform(img)
         return x_i, x_j
+
 
 # ----------------------
 # Vision Transformer Backbone
@@ -47,11 +61,14 @@ class ViT_SSL(nn.Module):
     def __init__(self, feature_dim=128, backbone_name="vit_tiny_patch16_96"):
         super().__init__()
         self.backbone = timm.create_model(
-            backbone_name, pretrained=False, num_classes=feature_dim
+            backbone_name,
+            pretrained=False,
+            num_classes=feature_dim
         )
     
     def forward(self, x):
         return self.backbone(x)
+
 
 # ----------------------
 # NT-Xent Loss
@@ -60,13 +77,17 @@ def nt_xent_loss(z_i, z_j, temperature=0.5):
     z = torch.cat([z_i, z_j], dim=0)
     z = F.normalize(z, dim=1)
     batch_size = z_i.size(0)
+
     sim = torch.matmul(z, z.T) / temperature
-    mask = (~torch.eye(2*batch_size, 2*batch_size, dtype=bool)).to(z.device)
+    mask = ~torch.eye(2 * batch_size, dtype=bool, device=z.device)
     exp_sim = torch.exp(sim) * mask
+
     pos_sim = torch.exp(torch.sum(z_i * z_j, dim=-1) / temperature)
     pos_sim = torch.cat([pos_sim, pos_sim], dim=0)
+
     loss = -torch.log(pos_sim / exp_sim.sum(dim=1))
     return loss.mean()
+
 
 # ----------------------
 # Training Loop
@@ -76,54 +97,72 @@ def main():
     parser.add_argument('--config', type=str, required=True, help="Path to YAML config")
     args = parser.parse_args()
 
-    # Load config
     with open(args.config, 'r') as f:
         config = yaml.safe_load(f)
 
-    # Set seed
     torch.manual_seed(config["seed"])
     random.seed(config["seed"])
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
     os.makedirs(config["save_dir"], exist_ok=True)
 
-    # Dataset & Loader
-    dataset = SimCLRDataset(config["data_dir"], config["image_size"])
-    loader = DataLoader(dataset,
-                        batch_size=config["batch_size"],
-                        shuffle=True,
-                        drop_last=True,
-                        num_workers=config["num_workers"])
+    # Dataset
+    dataset = SimCLRDataset(
+        root=config["data_dir"],
+        image_size=config["image_size"]
+    )
+
+    loader = DataLoader(
+        dataset,
+        batch_size=config["batch_size"],
+        shuffle=True,
+        num_workers=config["num_workers"],
+        drop_last=True
+    )
 
     # Model
-    model = ViT_SSL(feature_dim=config["feature_dim"], backbone_name=config["backbone"]).to(device)
+    model = ViT_SSL(
+        feature_dim=config["feature_dim"],
+        backbone_name=config["backbone"]
+    ).to(device)
 
-    # Print trainable params and image resolution
+    # Print stats
     total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"Trainable Parameters: {total_params/1e6:.2f}M")
     print(f"Image Resolution: {config['image_size']}x{config['image_size']}")
 
-    # Optimizer
-    optimizer = torch.optim.Adam(model.parameters(), lr=config["learning_rate"], weight_decay=config["weight_decay"])
+    optimizer = torch.optim.Adam(
+        model.parameters(),
+        lr=config["learning_rate"],
+        weight_decay=config["weight_decay"]
+    )
 
-    # Training loop
+    # Train
     for epoch in range(config["epochs"]):
         model.train()
         total_loss = 0
+
         for x_i, x_j in loader:
             x_i, x_j = x_i.to(device), x_j.to(device)
+
             z_i, z_j = model(x_i), model(x_j)
+
             loss = nt_xent_loss(z_i, z_j, temperature=config["temperature"])
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+
             total_loss += loss.item()
+
         print(f"Epoch [{epoch+1}/{config['epochs']}], Loss: {total_loss/len(loader):.4f}")
 
-    # Save backbone
-    torch.save(model.backbone.state_dict(), os.path.join(config["save_dir"], config["save_backbone_name"]))
-    print(f"Backbone saved to {config['save_dir']}/{config['save_backbone_name']}")
+    # Save
+    save_path = os.path.join(config["save_dir"], config["save_backbone_name"])
+    torch.save(model.backbone.state_dict(), save_path)
 
-if __name__ == '__main__':
+    print(f"Backbone saved to {save_path}")
+
+
+if __name__ == "__main__":
     main()
-

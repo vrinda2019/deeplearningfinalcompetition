@@ -1,81 +1,80 @@
 import os
+import random
+import argparse
+import glob
+from PIL import Image
+import yaml
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
-from PIL import Image
-import torchvision.transforms as T
+from torchvision import transforms
 import timm
 
-########################################
-# 1. SimCLR Dataset (no class folders)
-########################################
-
-class SimCLRDataset(Dataset):
-    def __init__(self, root, image_size=224):
-        self.root = root
-
-        # Find all image files
-        exts = (".jpg", ".jpeg", ".png", ".bmp", ".webp")
-        self.files = [
-            os.path.join(root, f)
-            for f in os.listdir(root)
-            if f.lower().endswith(exts)
-        ]
-
-        if len(self.files) == 0:
-            raise RuntimeError(f"No image files found in {root}")
-
-        self.transform = T.Compose([
-            T.RandomResizedCrop(image_size, scale=(0.2, 1.0)),
-            T.RandomHorizontalFlip(),
-            T.ColorJitter(0.4, 0.4, 0.4, 0.1),
-            T.RandomGrayscale(p=0.2),
-            T.ToTensor(),
-            T.Normalize(
-                mean=[0.485, 0.456, 0.406],
-                std=[0.229, 0.224, 0.225]
-            )
-        ])
-
-    def __len__(self):
-        return len(self.files)
-
-    def __getitem__(self, idx):
-        img = Image.open(self.files[idx]).convert("RGB")
-        x1 = self.transform(img)
-        x2 = self.transform(img)
-        return x1, x2
-
-
-########################################
-# 2. SimCLR Model with ViT Encoder
-########################################
-
+# ----------------------
+# Projection Head
+# ----------------------
 class ProjectionHead(nn.Module):
-    def __init__(self, in_dim, out_dim):
+    def __init__(self, in_dim, out_dim=128):
         super().__init__()
         self.net = nn.Sequential(
             nn.Linear(in_dim, in_dim),
-            nn.ReLU(inplace=True),
+            nn.ReLU(),
             nn.Linear(in_dim, out_dim)
         )
 
     def forward(self, x):
         return self.net(x)
 
+# ----------------------
+# SimCLR Transform
+# ----------------------
+class SimCLRTransform:
+    def __init__(self, image_size=96):
+        self.transform = transforms.Compose([
+            transforms.RandomResizedCrop(image_size),
+            transforms.RandomHorizontalFlip(),
+            transforms.ColorJitter(0.8, 0.8, 0.8, 0.2),
+            transforms.RandomGrayscale(p=0.2),
+            transforms.ToTensor(),
+            transforms.Normalize([0.485, 0.456, 0.406],
+                                 [0.229, 0.224, 0.225])
+        ])
 
+    def __call__(self, x):
+        return self.transform(x), self.transform(x)  # two augmented views
+
+# ----------------------
+# Custom Dataset for Flat Folder
+# ----------------------
+class SimCLRDataset(Dataset):
+    def __init__(self, root, image_size=96):
+        self.image_paths = glob.glob(os.path.join(root, "*.jpg"))
+        if len(self.image_paths) == 0:
+            raise FileNotFoundError(f"No images found in {root}")
+        self.transform = SimCLRTransform(image_size)
+
+    def __len__(self):
+        return len(self.image_paths)
+
+    def __getitem__(self, idx):
+        img_path = self.image_paths[idx]
+        img = Image.open(img_path).convert('RGB')
+        x_i, x_j = self.transform(img)
+        return x_i, x_j
+
+# ----------------------
+# ViT + Projector
+# ----------------------
 class SimCLRViT(nn.Module):
     def __init__(self, feature_dim=128):
         super().__init__()
-
-        # vit_tiny_patch16_224 exists in timm
         self.encoder = timm.create_model(
-            'vit_tiny_patch16_224',
+            'vit_tiny_patch16_96',  # ensure timm>=0.9.0
             pretrained=False,
             num_classes=0
         )
-
         embed_dim = self.encoder.num_features
         self.projector = ProjectionHead(embed_dim, feature_dim)
 
@@ -84,66 +83,81 @@ class SimCLRViT(nn.Module):
         z = F.normalize(self.projector(h), dim=1)
         return h, z
 
+# ----------------------
+# NT-Xent Loss
+# ----------------------
+def nt_xent_loss(z_i, z_j, temperature=0.5):
+    z = torch.cat([z_i, z_j], dim=0)
+    z = F.normalize(z, dim=1)
+    batch_size = z_i.size(0)
+    sim = torch.matmul(z, z.T) / temperature
+    mask = (~torch.eye(2*batch_size, 2*batch_size, dtype=bool)).to(z.device)
+    exp_sim = torch.exp(sim) * mask
+    pos_sim = torch.exp(torch.sum(z_i * z_j, dim=-1) / temperature)
+    pos_sim = torch.cat([pos_sim, pos_sim], dim=0)
+    loss = -torch.log(pos_sim / exp_sim.sum(dim=1))
+    return loss.mean()
 
-########################################
-# 3. NT-Xent Loss
-########################################
-
-def nt_xent_loss(z1, z2, temperature=0.5):
-    N = z1.size(0)
-    z = torch.cat([z1, z2], dim=0)
-
-    sim = torch.mm(z, z.t()) / temperature
-    mask = ~torch.eye(2 * N, dtype=bool).to(z.device)
-    sim = sim[mask].view(2 * N, 2 * N - 1)
-
-    positives = torch.sum(z1 * z2, dim=-1) / temperature
-    positives = torch.cat([positives, positives], dim=0)
-
-    labels = torch.arange(2 * N).to(z.device)
-
-    return F.cross_entropy(sim, labels)
-
-
-########################################
-# 4. Training Loop
-########################################
-
+# ----------------------
+# Training Loop
+# ----------------------
 def main():
-    data_dir = "/scratch/vt2370/dataset/cc3m_all/train"
-    image_size = 224
-    batch_size = 256
-    epochs = 100
-    lr = 3e-4
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--config', type=str, required=True, help='Path to YAML config')
+    args = parser.parse_args()
 
-    print("Loading dataset...")
-    dataset = SimCLRDataset(data_dir, image_size)
-    loader = DataLoader(dataset, batch_size=batch_size,
-                        shuffle=True, num_workers=8,
-                        drop_last=True)
+    # Load config
+    with open(args.config, 'r') as f:
+        config = yaml.safe_load(f)
 
-    print("Building model...")
-    model = SimCLRViT().cuda()
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    # Set seed
+    torch.manual_seed(config["seed"])
+    random.seed(config["seed"])
 
-    print("Starting SSL pretraining...")
-    for epoch in range(epochs):
-        for x1, x2 in loader:
-            x1, x2 = x1.cuda(), x2.cuda()
-            _, z1 = model(x1)
-            _, z2 = model(x2)
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    os.makedirs(config["save_dir"], exist_ok=True)
 
-            loss = nt_xent_loss(z1, z2)
+    # Dataset & DataLoader
+    dataset = SimCLRDataset(config["data_dir"], config["image_size"])
+    loader = DataLoader(
+        dataset,
+        batch_size=config["batch_size"],
+        shuffle=True,
+        drop_last=True,
+        num_workers=config["num_workers"]
+    )
 
+    # Model
+    model = SimCLRViT(feature_dim=config["feature_dim"]).to(device)
+
+    print(f"Total trainable params: {sum(p.numel() for p in model.parameters() if p.requires_grad)/1e6:.2f}M")
+    print(f"Dataset size: {len(dataset)} images")
+
+    # Optimizer
+    optimizer = torch.optim.Adam(
+        model.parameters(),
+        lr=config["learning_rate"],
+        weight_decay=config["weight_decay"]
+    )
+
+    # Training
+    for epoch in range(config["epochs"]):
+        model.train()
+        total_loss = 0
+        for x_i, x_j in loader:
+            x_i, x_j = x_i.to(device), x_j.to(device)
+            h_i, z_i = model(x_i)
+            h_j, z_j = model(x_j)
+            loss = nt_xent_loss(z_i, z_j, temperature=config["temperature"])
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+            total_loss += loss.item()
+        print(f"Epoch [{epoch+1}/{config['epochs']}], Loss: {total_loss/len(loader):.4f}")
 
-        print(f"Epoch {epoch+1}/{epochs} - Loss: {loss.item():.4f}")
-
-    print("Training finished!")
-
+    # Save backbone
+    torch.save(model.encoder.state_dict(), os.path.join(config["save_dir"], config["save_backbone_name"]))
+    print(f"Backbone saved to {os.path.join(config['save_dir'], config['save_backbone_name'])}")
 
 if __name__ == "__main__":
     main()
-

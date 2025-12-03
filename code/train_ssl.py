@@ -9,8 +9,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
-from torchvision import transforms
-import timm
+from torchvision import transforms, models
 
 # ----------------------
 # Projection Head
@@ -65,21 +64,22 @@ class SimCLRDataset(Dataset):
         return x_i, x_j
 
 # ----------------------
-# ViT + Projector
+# ResNet + Projector
 # ----------------------
-class SimCLRViT(nn.Module):
+class SimCLRResNet(nn.Module):
     def __init__(self, feature_dim=128):
         super().__init__()
-        self.encoder = timm.create_model(
-            'vit_tiny_patch16_96',  # ensure timm>=0.9.0
-            pretrained=False,
-            num_classes=0
-        )
-        embed_dim = self.encoder.num_features
-        self.projector = ProjectionHead(embed_dim, feature_dim)
+        # Load ResNet50 backbone
+        resnet = models.resnet50(pretrained=False)
+        modules = list(resnet.children())[:-1]  # remove classifier
+        self.encoder = nn.Sequential(*modules)  # output shape: (batch, 2048, 1, 1)
+        self.encoder_out_dim = resnet.fc.in_features
+
+        self.projector = ProjectionHead(self.encoder_out_dim, feature_dim)
 
     def forward(self, x):
-        h = self.encoder(x)
+        h = self.encoder(x)                # shape: (batch, 2048, 1, 1)
+        h = h.flatten(start_dim=1)         # shape: (batch, 2048)
         z = F.normalize(self.projector(h), dim=1)
         return h, z
 
@@ -128,7 +128,7 @@ def main():
     )
 
     # Model
-    model = SimCLRViT(feature_dim=config["feature_dim"]).to(device)
+    model = SimCLRResNet(feature_dim=config["feature_dim"]).to(device)
 
     print(f"Total trainable params: {sum(p.numel() for p in model.parameters() if p.requires_grad)/1e6:.2f}M")
     print(f"Dataset size: {len(dataset)} images")

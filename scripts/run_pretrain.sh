@@ -44,6 +44,6 @@ echo "Output directory: $OUTPUT_DIR"
 # Run SSL pretraining
 # --------------------------
 echo "Starting SSL pretraining..."
-python code/train_ssl.py --config $CONFIG_FILE --output_dir $OUTPUT_DIR
+python code/train_ssl.py --config $CONFIG_FILE 
 
 echo "Training finished!"

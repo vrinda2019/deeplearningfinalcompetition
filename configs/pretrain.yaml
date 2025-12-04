@@ -1,21 +1,58 @@
-# Dataset paths
+# =========================
+# Dataset / Data Augmentation
+# =========================
 data_dir: "/scratch/vt2370/dataset/cc3m_all/train"
-batch_size: 128
-num_workers: 4
-image_size: 96
+batch_size: 256                  # increased for stronger contrastive signals
+num_workers: 8                   # increase if CPU allows
+image_size: 128                  # slightly larger image for richer features
 
-# Model parameters
-feature_dim: 128
+augmentations:
+  random_resized_crop: 128
+  horizontal_flip: True
+  color_jitter:
+    brightness: 0.4
+    contrast: 0.4
+    saturation: 0.4
+    hue: 0.1
+  gaussian_blur: True
+  normalize:
+    mean: [0.485, 0.456, 0.406]
+    std: [0.229, 0.224, 0.225]
 
-# Training parameters
-epochs: 50
+# =========================
+# Model Parameters
+# =========================
+backbone: "resnet50"            # stronger backbone
+feature_dim: 512                # higher dimensional features
+
+projection:
+  num_layers: 2                 # MLP projection head
+  hidden_dim: 1024
+  output_dim: 128
+
+# =========================
+# Training Parameters
+# =========================
+epochs: 150                     # more epochs for stronger pretraining
 learning_rate: 0.001
-weight_decay: 1e-6
+lr_schedule:
+  type: "cosine"
+  warmup_epochs: 10
+
+weight_decay: 1e-4              # slightly higher for better regularization
 temperature: 0.5
 
+fp16: True                       # mixed precision for faster training
+multi_gpu: True                  # if using multiple GPUs
+
+# =========================
 # Output / Artifacts
+# =========================
 save_dir: "./artifacts"
 save_backbone_name: "resnet_backbone.pth"
+save_every: 10                   # checkpoint every 10 epochs
 
-# Seed
+# =========================
+# Reproducibility
+# =========================
 seed: 42

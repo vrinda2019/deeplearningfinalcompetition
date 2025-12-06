@@ -1,0 +1,61 @@
+# =========================
+# Dataset / Data Augmentation
+# =========================
+data_dir: "/scratch/vt2370/dataset/cc3m_all/train"
+batch_size: 256                  # smaller batch → stronger gradients
+num_workers: 8
+image_size: 96
+
+augmentations:
+  random_resized_crop: 96
+  horizontal_flip: True
+  color_jitter:
+    brightness: 0.4              # reduced strength
+    contrast: 0.4
+    saturation: 0.4
+    hue: 0.05
+  random_grayscale: 0.1
+  gaussian_blur: False           # disable for faster early convergence
+  normalize:
+    mean: [0.485, 0.456, 0.406]
+    std: [0.229, 0.224, 0.225]
+
+# =========================
+# Model Parameters
+# =========================
+backbone: "resnet50"
+feature_dim: 512
+
+projection:
+  num_layers: 2
+  hidden_dim: 2048               # wider head improves alignment
+  output_dim: 128
+
+# =========================
+# Training Parameters
+# =========================
+epochs: 30                       # target loss convergence by 30
+learning_rate: 0.0005            # more stable
+lr_schedule:
+  type: "cosine"
+  warmup_epochs: 3               # short warmup
+
+optimizer: "SGD"                 # preferred for SimCLR
+momentum: 0.9
+weight_decay: 1e-4
+temperature: 0.2                 # stronger contrastive signal
+
+fp16: True
+multi_gpu: True
+
+# =========================
+# Output / Artifacts
+# =========================
+save_dir: "./artifacts3"
+save_backbone_name: "resnet_backbone_epoch30.pth"
+save_every: 5
+
+# =========================
+# Reproducibility
+# =========================
+seed: 42

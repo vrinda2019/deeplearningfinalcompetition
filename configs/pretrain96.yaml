@@ -2,7 +2,7 @@
 # Dataset / Data Augmentation
 # =========================
 data_dir: "/scratch/vt2370/dataset/cc3m_all/train"
-batch_size: 256                  # increase if GPU allows for stronger contrastive signal
+batch_size: 516                 # increase if GPU allows for stronger contrastive signal
 num_workers: 8
 image_size: 96                    # fixed, can't change
 
@@ -34,7 +34,7 @@ projection:
 # =========================
 # Training Parameters
 # =========================
-epochs: 50
+epochs: 70
 learning_rate: 0.0015            # slightly higher for faster convergence
 lr_schedule:
   type: "cosine"
@@ -50,8 +50,8 @@ multi_gpu: True
 # =========================
 # Output / Artifacts
 # =========================
-save_dir: "./artifacts"
-save_backbone_name: "resnet_backbone.pth"
+save_dir: "./artif"
+save_backbone_name: "resnet_backbone69.pth"
 save_every: 5                     # save more frequently
 
 # =========================

@@ -23,7 +23,7 @@ conda activate ssl_env
 # Config & checkpoint paths
 # -------------------------------
 CONFIG="configs/pretrain96.yaml"
-SAVE_DIR="./artifacts22"
+SAVE_DIR="./artif"
 
 # -------------------------------
 # Find latest checkpoint

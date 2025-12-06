@@ -37,10 +37,10 @@ LATEST_CKPT=$(ls -1t $SAVE_DIR/checkpoint_epoch_*.pth 2>/dev/null | head -n 1)
 if [ -f "$LATEST_CKPT" ]; then
     echo "Resuming from checkpoint:"
     echo "  $LATEST_CKPT"
-    python code/ssl.py --config $CONFIG --resume $LATEST_CKPT
+    python code/train_ssl96..py --config $CONFIG --resume $LATEST_CKPT
 else
     echo "No checkpoint found. Starting fresh training."
-    python code/ssl.py --config $CONFIG
+    python code/train_ssl96.py --config $CONFIG
 fi
 
 echo "=== SSL Pretraining Job Finished ==="

@@ -40,7 +40,7 @@ if [ -f "$LATEST_CKPT" ]; then
     python code/ssl.py --config $CONFIG --resume $LATEST_CKPT
 else
     echo "No checkpoint found. Starting fresh training."
-    python code/train_ssl.py --config $CONFIG
+    python code/ssl.py --config $CONFIG
 fi
 
 echo "=== SSL Pretraining Job Finished ==="

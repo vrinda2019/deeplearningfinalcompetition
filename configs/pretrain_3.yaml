@@ -34,7 +34,7 @@ projection:
 # =========================
 # Training Parameters
 # =========================
-epochs: 30                       # target loss convergence by 30
+epochs: 20                      # target loss convergence by 30
 learning_rate: 0.0005            # more stable
 lr_schedule:
   type: "cosine"

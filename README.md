@@ -1,4 +1,4 @@
-# Self-Supervised Learning for Visual Representations
+# Team No Label: Self-Supervised Learning for Visual Representations
 
 Learning visual representations from unlabeled images using self-supervised learning (SSL) with models under 100M parameters.
 
